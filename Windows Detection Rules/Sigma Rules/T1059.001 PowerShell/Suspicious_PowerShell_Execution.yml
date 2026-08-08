@@ -1,0 +1,84 @@
+title: Suspicious PowerShell Execution
+id: 5b8f2e6a-2e3d-4a91-9b8e-71c6f5d42a10
+status: experimental
+description: >
+  Detects potentially malicious PowerShell execution involving encoded or
+  obfuscated commands, hidden execution, suspicious execution policies,
+  or suspicious parent processes.
+
+references:
+  - https://attack.mitre.org/detectionstrategies/DET0455/
+  - https://attack.mitre.org/techniques/T1059/001/
+
+author: Jayesh Ashok
+date: 2026-08-08
+
+tags:
+  - attack.execution
+  - attack.t1059
+  - attack.t1059.001
+
+logsource:
+  product: windows
+  category: process_creation
+
+detection:
+
+  selection_powershell:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+
+  selection_encoded:
+    CommandLine|contains:
+      - ' -enc '
+      - ' -encodedcommand '
+      - ' -e '
+
+  selection_hidden:
+    CommandLine|contains:
+      - ' -w hidden'
+      - ' -windowstyle hidden'
+      - ' -windowstyle 8'
+
+  selection_bypass:
+    CommandLine|contains:
+      - ' -executionpolicy bypass'
+      - ' -ep bypass'
+
+  selection_no_profile:
+    CommandLine|contains:
+      - ' -nop '
+      - ' -noprofile'
+
+  selection_suspicious_parent:
+    ParentImage|endswith:
+      - '\winword.exe'
+      - '\excel.exe'
+      - '\powerpnt.exe'
+      - '\outlook.exe'
+      - '\mshta.exe'
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\wmiprvse.exe'
+      - '\rundll32.exe'
+      - '\regsvr32.exe'
+      - '\msiexec.exe'
+
+  condition:
+    selection_powershell and
+    (
+      selection_encoded or
+      selection_hidden or
+      selection_bypass or
+      selection_no_profile or
+      selection_suspicious_parent
+    )
+
+falsepositives:
+  - Legitimate administrative PowerShell usage
+  - Software deployment tools
+  - Configuration management systems
+  - Security monitoring tools
+
+level: medium

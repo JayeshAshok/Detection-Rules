@@ -1,0 +1,41 @@
+title: PowerShell Network Connection
+id: 7e2c91a4-83f6-4d2b-a1e7-54c9f80b631d
+status: experimental
+description: >
+  Detects network connections originating from PowerShell processes.
+  This rule is intended as a supporting signal for correlating suspicious
+  PowerShell execution with subsequent network activity.
+
+references:
+  - https://attack.mitre.org/detectionstrategies/DET0455/
+  - https://attack.mitre.org/techniques/T1059/001/
+
+author: Detection Engineering
+date: 2026-08-08
+
+tags:
+  - attack.execution
+  - attack.t1059
+  - attack.t1059.001
+
+logsource:
+  product: windows
+  category: network_connection
+
+detection:
+
+  selection:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+
+  condition: selection
+
+falsepositives:
+  - Legitimate PowerShell scripts
+  - Windows administration
+  - Software deployment
+  - Configuration management
+  - Security tools
+
+level: low

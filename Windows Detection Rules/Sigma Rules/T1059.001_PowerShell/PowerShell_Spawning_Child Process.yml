@@ -1,0 +1,61 @@
+title: PowerShell Spawning Suspicious Child Process
+id: 3a6d72e1-45f9-4b8c-b230-91e57c4a6d82
+status: experimental
+description: >
+  Detects PowerShell spawning processes that are commonly associated with
+  command execution, script execution, proxy execution, LOLBin activity,
+  or payload execution. This rule is intended as a supporting signal for
+  suspicious PowerShell activity and should be correlated with the parent
+  PowerShell execution.
+
+references:
+  - https://attack.mitre.org/detectionstrategies/DET0455/
+  - https://attack.mitre.org/techniques/T1059/001/
+
+author: Detection Engineering
+date: 2026-08-08
+
+tags:
+  - attack.execution
+  - attack.t1059
+  - attack.t1059.001
+
+logsource:
+  product: windows
+  category: process_creation
+
+detection:
+
+  selection_parent:
+    ParentImage|endswith:
+      - '\powershell.exe'
+      - '\pwsh.exe'
+
+  selection_suspicious_child:
+    Image|endswith:
+      - '\cmd.exe'
+      - '\rundll32.exe'
+      - '\regsvr32.exe'
+      - '\mshta.exe'
+      - '\certutil.exe'
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\bitsadmin.exe'
+      - '\reg.exe'
+      - '\schtasks.exe'
+      - '\wmic.exe'
+      - '\msiexec.exe'
+      - '\installutil.exe'
+      - '\cmstp.exe'
+
+  condition: selection_parent and selection_suspicious_child
+
+falsepositives:
+  - Legitimate administrative PowerShell scripts
+  - Software deployment tools
+  - Configuration management systems
+  - System administration
+  - Security tools
+
+level: low
+```

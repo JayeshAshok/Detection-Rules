@@ -1,0 +1,111 @@
+let CorrelationWindow = 5m;
+let SuspiciousPowerShell =
+    DeviceProcessEvents_Sysmon()
+    | where FileName in~ ("powershell.exe", "pwsh.exe")
+    | extend
+        SuspiciousEncoded = ProcessCommandLine contains " -enc " or ProcessCommandLine contains " -encodedcommand " or ProcessCommandLine contains " -e ",
+        SuspiciousHidden = ProcessCommandLine contains " -w hidden" or ProcessCommandLine contains " -windowstyle hidden" or ProcessCommandLine contains " -windowstyle 8",
+        SuspiciousBypass = ProcessCommandLine contains " -executionpolicy bypass" or ProcessCommandLine contains " -ep bypass",
+        SuspiciousNoProfile = ProcessCommandLine contains " -nop " or ProcessCommandLine contains " -noprofile",
+        SuspiciousParent = InitiatingProcessFileName in~ ("winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "mshta.exe", "wscript.exe", "cscript.exe", "wmiprvse.exe", "rundll32.exe", "regsvr32.exe", "msiexec.exe")
+    | where SuspiciousEncoded or SuspiciousHidden or SuspiciousBypass or SuspiciousNoProfile or SuspiciousParent
+    | project
+        SuspiciousTime = Timestamp,
+        DeviceName,
+        ProcessUniqueId,
+        ProcessId,
+        FileName,
+        FolderPath,
+        ProcessCommandLine,
+        InitiatingProcessFileName,
+        InitiatingProcessCommandLine,
+        SuspiciousEncoded,
+        SuspiciousHidden,
+        SuspiciousBypass,
+        SuspiciousNoProfile,
+        SuspiciousParent;
+let PowerShellNetwork =
+    DeviceNetworkEvents_Sysmon()
+    | where InitiatingProcessFileName in~ ("powershell.exe", "pwsh.exe")
+    | project
+        NetworkTime = Timestamp,
+        DeviceName,
+        InitiatingProcessUniqueId,
+        RemoteIP,
+        RemotePort,
+        RemoteUrl,
+        Protocol;
+let PowerShellChildProcess =
+    DeviceProcessEvents_Sysmon()
+    | where FileName in~ ("cmd.exe", "rundll32.exe", "regsvr32.exe", "mshta.exe", "certutil.exe", "wscript.exe", "cscript.exe", "bitsadmin.exe", "reg.exe", "schtasks.exe", "wmic.exe", "msiexec.exe", "installutil.exe", "cmstp.exe")
+    | project
+        ChildTime = Timestamp,
+        DeviceName,
+        InitiatingProcessUniqueId,
+        ChildProcessUniqueId = ProcessUniqueId,
+        ChildProcessId = ProcessId,
+        ChildFileName = FileName,
+        ChildFolderPath = FolderPath,
+        ChildCommandLine = ProcessCommandLine;
+let NetworkCorrelation =
+    SuspiciousPowerShell
+    | join kind=leftouter (PowerShellNetwork) on DeviceName, $left.ProcessUniqueId == $right.InitiatingProcessUniqueId
+    | where isempty(NetworkTime) or (NetworkTime >= SuspiciousTime and NetworkTime <= SuspiciousTime + CorrelationWindow)
+    | summarize
+        HasNetworkConnection = countif(isnotempty(NetworkTime)) > 0,
+        NetworkTime = min(NetworkTime),
+        DestinationIP = take_any(RemoteIP),
+        DestinationPort = take_any(RemotePort),
+        RemoteUrl = take_any(RemoteUrl),
+        NetworkProtocol = take_any(Protocol)
+        by SuspiciousTime, DeviceName, ProcessUniqueId, ProcessId, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, SuspiciousEncoded, SuspiciousHidden, SuspiciousBypass, SuspiciousNoProfile, SuspiciousParent;
+let ChildCorrelation =
+    SuspiciousPowerShell
+    | join kind=leftouter (PowerShellChildProcess) on DeviceName, $left.ProcessUniqueId == $right.InitiatingProcessUniqueId
+    | where isempty(ChildTime) or (ChildTime >= SuspiciousTime and ChildTime <= SuspiciousTime + CorrelationWindow)
+    | summarize
+        HasChildProcess = countif(isnotempty(ChildTime)) > 0,
+        ChildProcessTime = min(ChildTime),
+        ChildProcess = take_any(ChildFileName),
+        ChildCommandLine = take_any(ChildCommandLine)
+        by SuspiciousTime, DeviceName, ProcessUniqueId, ProcessId;
+NetworkCorrelation
+| join kind=leftouter ChildCorrelation on SuspiciousTime, DeviceName, ProcessUniqueId, ProcessId
+| extend
+    HasNetworkConnection = coalesce(HasNetworkConnection, false),
+    HasChildProcess = coalesce(HasChildProcess, false)
+| extend Severity = case(
+    HasNetworkConnection and HasChildProcess, "Critical",
+    HasNetworkConnection or HasChildProcess, "High",
+    "Medium"
+)
+| extend DetectionReason = case(
+    HasNetworkConnection and HasChildProcess, "Suspicious PowerShell Execution followed by network connection and suspicious child process",
+    HasNetworkConnection, "Suspicious PowerShell Execution followed by network connection",
+    HasChildProcess, "Suspicious PowerShell Execution followed by suspicious child process",
+    "Suspicious PowerShell Execution"
+)
+| project
+    TimeGenerated = SuspiciousTime,
+    DeviceName,
+    Severity,
+    DetectionReason,
+    ProcessUniqueId,
+    ProcessId,
+    FileName,
+    FolderPath,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    DestinationIP,
+    DestinationPort,
+    RemoteUrl,
+    NetworkProtocol,
+    ChildProcess,
+    ChildCommandLine,
+    SuspiciousEncoded,
+    SuspiciousHidden,
+    SuspiciousBypass,
+    SuspiciousNoProfile,
+    SuspiciousParent
+| order by TimeGenerated desc

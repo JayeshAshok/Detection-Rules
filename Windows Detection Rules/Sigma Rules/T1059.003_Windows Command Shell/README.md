@@ -1,4 +1,4 @@
-# AN0578 — Suspicious Windows Command Shell (cmd.exe) Execution
+# DET202 — Suspicious Windows Command Shell (cmd.exe) Execution
 
 ## Overview
 

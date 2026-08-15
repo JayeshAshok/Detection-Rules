@@ -85,6 +85,7 @@ NetworkCorrelation
     HasChildProcess, "Suspicious PowerShell Execution followed by suspicious child process",
     "Suspicious PowerShell Execution"
 )
+| where InitiatingProcessFileName != "gc_worker.exe"
 | project
     TimeGenerated = SuspiciousTime,
     DeviceName,

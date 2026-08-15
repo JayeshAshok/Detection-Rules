@@ -194,7 +194,7 @@ Suspicious CMD Execution
 This branch contains the following Sigma rules:
 
 ```text
-AN0578/
+DET202/
 │
 ├── suspicious_cmd_execution.yml
 ├── cmd_discovery_activity.yml

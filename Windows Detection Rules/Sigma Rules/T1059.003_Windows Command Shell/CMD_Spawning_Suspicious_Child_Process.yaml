@@ -1,0 +1,26 @@
+title: CMD Spawning Suspicious Child Process
+id: 90b8c12f-45d2-4c45-b5b6-an0578-04
+
+logsource:
+  product: windows
+  category: process_creation
+
+detection:
+
+  parent:
+    ParentImage|endswith: '\cmd.exe'
+
+  child:
+    Image|endswith:
+      - '\powershell.exe'
+      - '\rundll32.exe'
+      - '\regsvr32.exe'
+      - '\mshta.exe'
+      - '\certutil.exe'
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\bitsadmin.exe'
+
+  condition: parent and child
+
+level: low

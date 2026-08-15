@@ -1,0 +1,24 @@
+title: CMD Lateral Movement Commands
+id: 7df4e82f-c3cb-4f52-9fd6-an0578-03
+
+logsource:
+  product: windows
+  category: process_creation
+
+detection:
+
+  selection:
+    ParentImage|endswith: '\cmd.exe'
+
+  lateral_commands:
+    CommandLine|contains:
+      - 'psexec'
+      - 'wmic'
+      - 'schtasks'
+      - 'sc.exe'
+      - 'net use'
+      - 'at.exe'
+
+  condition: selection and lateral_commands
+
+level: low

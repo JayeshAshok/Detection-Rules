@@ -1,0 +1,27 @@
+title: CMD Discovery Commands
+id: 8ab9a8db-c5df-4a2e-bf4f-an0578-02
+
+logsource:
+  product: windows
+  category: process_creation
+
+detection:
+
+  selection:
+    ParentImage|endswith: '\cmd.exe'
+
+  discovery_commands:
+    CommandLine|contains:
+      - 'whoami'
+      - 'hostname'
+      - 'systeminfo'
+      - 'ipconfig'
+      - 'arp'
+      - 'net user'
+      - 'net localgroup'
+      - 'nltest'
+      - 'quser'
+
+  condition: selection and discovery_commands
+
+level: low

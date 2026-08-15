@@ -1,0 +1,23 @@
+title: Batch File Execution From Suspicious Location
+id: 5d9b02ce-7c95-4ab1-b11d-an0578-05
+
+logsource:
+  product: windows
+  category: process_creation
+
+detection:
+
+  batch_file:
+    CommandLine|contains:
+      - '.bat'
+      - '.cmd'
+
+  suspicious_path:
+    CommandLine|contains:
+      - '\AppData\Local\Temp\'
+      - '\Users\Public\'
+      - ':\Temp\'
+
+  condition: batch_file and suspicious_path
+
+level: low

@@ -1,0 +1,245 @@
+let CorrelationWindow = 5m;
+let SuspiciousCMD =
+    DeviceProcessEvents_Sysmon()
+    | where FileName =~ "cmd.exe"
+    | extend
+        SuspiciousParent =
+            InitiatingProcessFileName in~ (
+                "winword.exe",
+                "excel.exe",
+                "powerpnt.exe",
+                "outlook.exe",
+                "mshta.exe",
+                "wscript.exe",
+                "cscript.exe",
+                "rundll32.exe",
+                "regsvr32.exe"
+            ),
+        CommandChaining =
+            ProcessCommandLine contains "&&"
+            or ProcessCommandLine contains "||"
+            or ProcessCommandLine contains " & "
+            or ProcessCommandLine contains "^",
+        DiscoveryInvocation =
+            ProcessCommandLine has_any (
+                "whoami",
+                "hostname",
+                "systeminfo",
+                "ipconfig",
+                "arp",
+                "route print",
+                "net user",
+                "net localgroup",
+                "nltest",
+                "quser",
+                "query user"
+            ),
+        LateralInvocation =
+            ProcessCommandLine has_any (
+                "wmic",
+                "schtasks",
+                "psexec",
+                "net use",
+                "at.exe"
+            ),
+        LOLBinInvocation =
+            ProcessCommandLine has_any (
+                "powershell",
+                "pwsh",
+                "mshta",
+                "rundll32",
+                "regsvr32",
+                "certutil",
+                "bitsadmin"
+            )
+    | where
+        SuspiciousParent
+        or CommandChaining
+        or DiscoveryInvocation
+        or LateralInvocation
+        or LOLBinInvocation
+    | project
+        SuspiciousTime = Timestamp,
+        DeviceName,
+        ProcessUniqueId,
+        ProcessId,
+        FileName,
+        FolderPath,
+        ProcessCommandLine,
+        InitiatingProcessFileName,
+        InitiatingProcessCommandLine,
+        SuspiciousParent,
+        CommandChaining,
+        DiscoveryInvocation,
+        LateralInvocation,
+        LOLBinInvocation;
+let DiscoveryActivity =
+    DeviceProcessEvents_Sysmon()
+    | where InitiatingProcessFileName =~ "cmd.exe"
+    | extend IsDiscovery =
+        ProcessCommandLine has_any (
+            "whoami",
+            "hostname",
+            "systeminfo",
+            "ipconfig",
+            "arp",
+            "route print",
+            "net user",
+            "net localgroup",
+            "nltest",
+            "quser",
+            "query user"
+        )
+    | where IsDiscovery
+    | project
+        DiscoveryTime = Timestamp,
+        DeviceName,
+        InitiatingProcessUniqueId,
+        DiscoveryCommand = ProcessCommandLine;
+let DiscoveryCorrelation =
+    SuspiciousCMD
+    | join kind=leftouter (DiscoveryActivity)
+        on DeviceName,
+           $left.ProcessUniqueId == $right.InitiatingProcessUniqueId
+    | where isempty(DiscoveryTime)
+        or (DiscoveryTime between (SuspiciousTime .. SuspiciousTime + CorrelationWindow))
+    | summarize
+        DiscoveryCount = countif(isnotempty(DiscoveryTime)),
+        DiscoveryCommands = make_set(DiscoveryCommand, 20)
+        by SuspiciousTime, DeviceName, ProcessUniqueId;
+let LateralMovementActivity =
+    DeviceProcessEvents_Sysmon()
+    | where InitiatingProcessFileName =~ "cmd.exe"
+    | where ProcessCommandLine has_any (
+        "wmic",
+        "schtasks",
+        "psexec",
+        "net use",
+        "at.exe"
+    )
+    | project
+        LateralTime = Timestamp,
+        DeviceName,
+        InitiatingProcessUniqueId,
+        LateralCommand = ProcessCommandLine;
+let LateralCorrelation =
+    SuspiciousCMD
+    | join kind=leftouter (LateralMovementActivity)
+        on DeviceName,
+           $left.ProcessUniqueId == $right.InitiatingProcessUniqueId
+    | where isempty(LateralTime)
+        or (LateralTime between (SuspiciousTime .. SuspiciousTime + CorrelationWindow))
+    | summarize
+        HasLateralMovement = countif(isnotempty(LateralTime)) > 0,
+        LateralCommands = make_set(LateralCommand, 20)
+        by SuspiciousTime, DeviceName, ProcessUniqueId;
+let SuspiciousChildProcess =
+    DeviceProcessEvents_Sysmon()
+    | where FileName in~ (
+        "powershell.exe",
+        "pwsh.exe",
+        "mshta.exe",
+        "rundll32.exe",
+        "regsvr32.exe",
+        "certutil.exe",
+        "bitsadmin.exe"
+    )
+    | project
+        ChildTime = Timestamp,
+        DeviceName,
+        InitiatingProcessUniqueId,
+        ChildProcess = FileName,
+        ChildCommandLine = ProcessCommandLine;
+let ChildCorrelation =
+    SuspiciousCMD
+    | join kind=leftouter (SuspiciousChildProcess)
+        on DeviceName,
+           $left.ProcessUniqueId == $right.InitiatingProcessUniqueId
+    | where isempty(ChildTime)
+        or (ChildTime between (SuspiciousTime .. SuspiciousTime + CorrelationWindow))
+    | summarize
+        HasSuspiciousChild = countif(isnotempty(ChildTime)) > 0,
+        ChildProcesses = make_set(ChildProcess, 20)
+        by SuspiciousTime, DeviceName, ProcessUniqueId;
+let SuspiciousBatchExecution =
+    DeviceProcessEvents_Sysmon()
+    | where ProcessCommandLine contains ".bat"
+        or ProcessCommandLine contains ".cmd"
+    | where ProcessCommandLine contains @"\AppData\Local\Temp\"
+        or ProcessCommandLine contains @"\Users\Public\"
+        or ProcessCommandLine contains @"\Temp\"
+    | where InitiatingProcessFileName in~ (
+        "cmd.exe",
+        "powershell.exe",
+        "wscript.exe",
+        "cscript.exe",
+        "mshta.exe"
+    )
+    | project
+        BatchTime = Timestamp,
+        DeviceName,
+        InitiatingProcessUniqueId,
+        BatchCommand = ProcessCommandLine;
+let BatchCorrelation =
+    SuspiciousCMD
+    | join kind=leftouter (SuspiciousBatchExecution)
+        on DeviceName,
+           $left.ProcessUniqueId == $right.InitiatingProcessUniqueId
+    | where isempty(BatchTime)
+        or (BatchTime between (SuspiciousTime .. SuspiciousTime + CorrelationWindow))
+    | summarize
+        HasSuspiciousBatch = countif(isnotempty(BatchTime)) > 0,
+        BatchCommands = make_set(BatchCommand, 20)
+        by SuspiciousTime, DeviceName, ProcessUniqueId;
+SuspiciousCMD
+| join kind=leftouter DiscoveryCorrelation on SuspiciousTime, DeviceName, ProcessUniqueId
+| join kind=leftouter LateralCorrelation on SuspiciousTime, DeviceName, ProcessUniqueId
+| join kind=leftouter ChildCorrelation on SuspiciousTime, DeviceName, ProcessUniqueId
+| join kind=leftouter BatchCorrelation on SuspiciousTime, DeviceName, ProcessUniqueId
+| extend
+    HasDiscovery = DiscoveryCount >= 2,
+    HasLateralMovement = coalesce(HasLateralMovement, false),
+    HasSuspiciousChild = coalesce(HasSuspiciousChild, false),
+    HasSuspiciousBatch = coalesce(HasSuspiciousBatch, false)
+| extend
+    SupportScore =
+        toint(HasDiscovery)
+        + toint(HasLateralMovement)
+        + toint(HasSuspiciousChild)
+        + toint(HasSuspiciousBatch)
+| extend
+    Severity = case(
+        SupportScore >= 2, "Critical",
+        SupportScore == 1, "High",
+        "Medium"
+    )
+| extend
+    DetectionReason = case(
+        SupportScore >= 2, "Suspicious CMD execution with multiple supporting behaviors",
+        SupportScore == 1, "Suspicious CMD execution with supporting behavior",
+        "Suspicious CMD execution"
+    )
+| project
+    TimeGenerated = SuspiciousTime,
+    DeviceName,
+    Severity,
+    DetectionReason,
+    SupportScore,
+    ProcessUniqueId,
+    ProcessId,
+    FileName,
+    FolderPath,
+    ProcessCommandLine,
+    InitiatingProcessFileName,
+    InitiatingProcessCommandLine,
+    DiscoveryCount,
+    DiscoveryCommands,
+    LateralCommands,
+    ChildProcesses,
+    BatchCommands,
+    SuspiciousParent,
+    CommandChaining,
+    DiscoveryInvocation,
+    LateralInvocation,
+    LOLBinInvocation
+| order by TimeGenerated desc

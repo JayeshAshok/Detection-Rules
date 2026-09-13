@@ -1,0 +1,100 @@
+title: Suspicious VBScript and Script Host Execution Chain
+id: 7b3d4e91-8a62-4f17-bc25-an0209-script-execution
+status: experimental
+description: Detects suspicious execution of VB-based scripts through wscript.exe, cscript.exe, or mshta.exe, particularly when launched by Office applications or when associated with suspicious script files, locations, PowerShell execution, or encoded/obfuscated command lines.
+references:
+  - https://attack.mitre.org/
+
+author: Jayesh Ashok
+
+logsource:
+  category: process_creation
+  product: windows
+
+detection:
+  script_host:
+    Image|endswith:
+      - '\wscript.exe'
+      - '\cscript.exe'
+      - '\mshta.exe'
+
+  office_parent:
+    ParentImage|endswith:
+      - '\winword.exe'
+      - '\excel.exe'
+      - '\powerpnt.exe'
+      - '\outlook.exe'
+      - '\onenote.exe'
+
+  html_script_parent:
+    ParentImage|endswith:
+      - '\mshta.exe'
+      - '\wscript.exe'
+      - '\cscript.exe'
+
+  vb_script:
+    CommandLine|contains:
+      - '.vbs'
+      - '.vbe'
+      - '.vbscript'
+
+  html_script:
+    CommandLine|contains:
+      - '.hta'
+      - '.htm'
+      - '.html'
+
+  suspicious_path:
+    CommandLine|contains:
+      - '\AppData\Local\Temp\'
+      - '\AppData\Roaming\'
+      - '\Users\Public\'
+      - '\Windows\Temp\'
+      - '\Temp\'
+
+  powershell_child:
+    CommandLine|contains:
+      - 'powershell'
+      - 'pwsh'
+      - '-enc'
+      - '-encodedcommand'
+
+  obfuscation:
+    CommandLine|contains:
+      - 'FromBase64String'
+      - 'Chr('
+      - 'ChrW('
+      - 'Execute('
+      - 'Eval('
+      - 'Replace('
+      - 'StrReverse('
+
+  script_engine:
+    ImageLoaded|endswith:
+      - '\vbscript.dll'
+      - '\scrrun.dll'
+
+  condition: >
+    script_host and (
+      (office_parent and (vb_script or html_script)) or
+      (html_script_parent and (vb_script or html_script)) or
+      (vb_script and suspicious_path) or
+      (html_script and suspicious_path) or
+      (script_host and powershell_child) or
+      (script_host and obfuscation)
+    )
+
+falsepositives:
+  - Legitimate administrative scripts
+  - Software installation scripts
+  - Login and startup scripts
+  - Enterprise automation
+  - Application maintenance scripts
+  - Office macros used for legitimate business automation
+
+level: medium
+
+tags:
+  - attack.execution
+  - attack.command-and-scripting-interpreter
+  - attack.user-execution

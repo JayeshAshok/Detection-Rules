@@ -1,0 +1,51 @@
+let CorrelationWindow = 5m;
+let SuspiciousScriptExecution =
+    DeviceProcessEvents_Sysmon()
+    | where FileName in~ ("wscript.exe", "cscript.exe", "mshta.exe")
+    | extend
+        OfficeParent = InitiatingProcessFileName in~ ("winword.exe", "excel.exe", "powerpnt.exe", "outlook.exe", "onenote.exe"),
+        ScriptExecution = ProcessCommandLine contains ".vbs" or ProcessCommandLine contains ".vbe" or ProcessCommandLine contains ".vbscript" or ProcessCommandLine contains ".hta" or ProcessCommandLine contains ".htm" or ProcessCommandLine contains ".html",
+        SuspiciousPath = ProcessCommandLine contains @"\AppData\Local\Temp\" or ProcessCommandLine contains @"\AppData\Roaming\" or ProcessCommandLine contains @"\Users\Public\" or ProcessCommandLine contains @"\Windows\Temp\" or ProcessCommandLine contains @"\Temp\",
+        PowerShellInvocation = ProcessCommandLine contains "powershell" or ProcessCommandLine contains "pwsh" or ProcessCommandLine contains "-enc" or ProcessCommandLine contains "-encodedcommand",
+        Obfuscation = ProcessCommandLine contains "FromBase64String" or ProcessCommandLine contains "Chr(" or ProcessCommandLine contains "ChrW(" or ProcessCommandLine contains "Execute(" or ProcessCommandLine contains "Eval(" or ProcessCommandLine contains "Replace(" or ProcessCommandLine contains "StrReverse("
+    | where (OfficeParent and ScriptExecution) or (ScriptExecution and SuspiciousPath) or PowerShellInvocation or Obfuscation
+    | project SuspiciousTime = Timestamp, DeviceName, ProcessUniqueId, ProcessId, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, OfficeParent, ScriptExecution, SuspiciousPath, PowerShellInvocation, Obfuscation;
+let PowerShellActivity =
+    DeviceProcessEvents_Sysmon()
+    | where FileName in~ ("powershell.exe", "pwsh.exe")
+    | where InitiatingProcessFileName in~ ("wscript.exe", "cscript.exe", "mshta.exe")
+    | project PowerShellTime = Timestamp, DeviceName, InitiatingProcessUniqueId, PowerShellProcess = FileName, PowerShellCommand = ProcessCommandLine;
+let PowerShellCorrelation =
+    SuspiciousScriptExecution
+    | join kind=leftouter (PowerShellActivity) on DeviceName, $left.ProcessUniqueId == $right.InitiatingProcessUniqueId
+    | where isempty(PowerShellTime) or (PowerShellTime between (SuspiciousTime .. SuspiciousTime + CorrelationWindow))
+    | summarize HasPowerShell = countif(isnotempty(PowerShellTime)) > 0, PowerShellCommands = make_set(PowerShellCommand, 20) by SuspiciousTime, DeviceName, ProcessUniqueId;
+let NetworkActivity =
+    DeviceNetworkEvents_Sysmon()
+    | where InitiatingProcessFileName in~ ("wscript.exe", "cscript.exe", "mshta.exe")
+    | project NetworkTime = Timestamp, DeviceName, InitiatingProcessUniqueId, RemoteIP, RemotePort, RemoteUrl, NetworkAction = ActionType;
+let NetworkCorrelation =
+    SuspiciousScriptExecution
+    | join kind=leftouter (NetworkActivity) on DeviceName, $left.ProcessUniqueId == $right.InitiatingProcessUniqueId
+    | where isempty(NetworkTime) or (NetworkTime between (SuspiciousTime .. SuspiciousTime + CorrelationWindow))
+    | summarize HasNetworkConnection = countif(isnotempty(NetworkTime)) > 0, NetworkDestinations = make_set(strcat(RemoteIP, ":", tostring(RemotePort), " ", RemoteUrl), 20) by SuspiciousTime, DeviceName, ProcessUniqueId;
+let SuspiciousChildProcess =
+    DeviceProcessEvents_Sysmon()
+    | where InitiatingProcessFileName in~ ("wscript.exe", "cscript.exe", "mshta.exe")
+    | where FileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe", "rundll32.exe", "regsvr32.exe", "certutil.exe", "bitsadmin.exe")
+    | project ChildTime = Timestamp, DeviceName, InitiatingProcessUniqueId, ChildProcess = FileName, ChildCommandLine = ProcessCommandLine;
+let ChildCorrelation =
+    SuspiciousScriptExecution
+    | join kind=leftouter (SuspiciousChildProcess) on DeviceName, $left.ProcessUniqueId == $right.InitiatingProcessUniqueId
+    | where isempty(ChildTime) or (ChildTime between (SuspiciousTime .. SuspiciousTime + CorrelationWindow))
+    | summarize HasSuspiciousChild = countif(isnotempty(ChildTime)) > 0, ChildProcesses = make_set(ChildProcess, 20), ChildCommands = make_set(ChildCommandLine, 20) by SuspiciousTime, DeviceName, ProcessUniqueId;
+SuspiciousScriptExecution
+| join kind=leftouter PowerShellCorrelation on SuspiciousTime, DeviceName, ProcessUniqueId
+| join kind=leftouter NetworkCorrelation on SuspiciousTime, DeviceName, ProcessUniqueId
+| join kind=leftouter ChildCorrelation on SuspiciousTime, DeviceName, ProcessUniqueId
+| extend HasPowerShell = coalesce(HasPowerShell, false), HasNetworkConnection = coalesce(HasNetworkConnection, false), HasSuspiciousChild = coalesce(HasSuspiciousChild, false)
+| extend SupportScore = toint(HasPowerShell) + toint(HasNetworkConnection) + toint(HasSuspiciousChild) + toint(SuspiciousPath) + toint(Obfuscation)
+| extend Severity = case(SupportScore >= 3, "Critical", SupportScore >= 1, "High", "Medium")
+| extend DetectionReason = case(SupportScore >= 3, "Suspicious script host execution with multiple supporting behaviors", SupportScore >= 1, "Suspicious script host execution with supporting behavior", "Suspicious script host execution")
+| project TimeGenerated = SuspiciousTime, DeviceName, Severity, DetectionReason, SupportScore, ProcessUniqueId, ProcessId, FileName, FolderPath, ProcessCommandLine, InitiatingProcessFileName, InitiatingProcessCommandLine, OfficeParent, ScriptExecution, SuspiciousPath, Obfuscation, HasPowerShell, PowerShellCommands, HasNetworkConnection, NetworkDestinations, HasSuspiciousChild, ChildProcesses, ChildCommands
+| order by TimeGenerated desc

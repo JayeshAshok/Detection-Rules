@@ -1,6 +1,6 @@
 let CorrelationWindow = 5m;
 let SuspiciousPowerShell =
-    DeviceProcessEvents_Sysmon()
+    DeviceProcessEvents
     | where FileName in~ ("powershell.exe", "pwsh.exe")
     | extend
         SuspiciousEncoded = ProcessCommandLine contains " -enc " or ProcessCommandLine contains " -encodedcommand " or ProcessCommandLine contains " -e ",
@@ -25,7 +25,7 @@ let SuspiciousPowerShell =
         SuspiciousNoProfile,
         SuspiciousParent;
 let PowerShellNetwork =
-    DeviceNetworkEvents_Sysmon()
+    DeviceNetworkEvents
     | where InitiatingProcessFileName in~ ("powershell.exe", "pwsh.exe")
     | project
         NetworkTime = Timestamp,
@@ -36,7 +36,7 @@ let PowerShellNetwork =
         RemoteUrl,
         Protocol;
 let PowerShellChildProcess =
-    DeviceProcessEvents_Sysmon()
+    DeviceProcessEvents
     | where FileName in~ ("cmd.exe", "rundll32.exe", "regsvr32.exe", "mshta.exe", "certutil.exe", "wscript.exe", "cscript.exe", "bitsadmin.exe", "reg.exe", "schtasks.exe", "wmic.exe", "msiexec.exe", "installutil.exe", "cmstp.exe")
     | project
         ChildTime = Timestamp,

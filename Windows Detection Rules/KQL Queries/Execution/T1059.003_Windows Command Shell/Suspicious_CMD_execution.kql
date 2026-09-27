@@ -1,6 +1,6 @@
 let CorrelationWindow = 5m;
 let SuspiciousCMD =
-    DeviceProcessEvents_Sysmon()
+    DeviceProcessEvents
     | where FileName =~ "cmd.exe"
     | extend
         SuspiciousParent =
@@ -74,7 +74,7 @@ let SuspiciousCMD =
         LateralInvocation,
         LOLBinInvocation;
 let DiscoveryActivity =
-    DeviceProcessEvents_Sysmon()
+    DeviceProcessEvents
     | where InitiatingProcessFileName =~ "cmd.exe"
     | extend IsDiscovery =
         ProcessCommandLine has_any (
@@ -108,7 +108,7 @@ let DiscoveryCorrelation =
         DiscoveryCommands = make_set(DiscoveryCommand, 20)
         by SuspiciousTime, DeviceName, ProcessUniqueId;
 let LateralMovementActivity =
-    DeviceProcessEvents_Sysmon()
+    DeviceProcessEvents
     | where InitiatingProcessFileName =~ "cmd.exe"
     | where ProcessCommandLine has_any (
         "wmic",
@@ -134,7 +134,7 @@ let LateralCorrelation =
         LateralCommands = make_set(LateralCommand, 20)
         by SuspiciousTime, DeviceName, ProcessUniqueId;
 let SuspiciousChildProcess =
-    DeviceProcessEvents_Sysmon()
+    DeviceProcessEvents
     | where FileName in~ (
         "powershell.exe",
         "pwsh.exe",
@@ -162,7 +162,7 @@ let ChildCorrelation =
         ChildProcesses = make_set(ChildProcess, 20)
         by SuspiciousTime, DeviceName, ProcessUniqueId;
 let SuspiciousBatchExecution =
-    DeviceProcessEvents_Sysmon()
+    DeviceProcessEvents
     | where ProcessCommandLine contains ".bat"
         or ProcessCommandLine contains ".cmd"
     | where ProcessCommandLine contains @"\AppData\Local\Temp\"
